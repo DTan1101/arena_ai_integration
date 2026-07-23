@@ -1,189 +1,343 @@
 # Arena AI Integration
 
-Unified ROS 2 integration for AI navigation agents in Arena.
+`arena_ai_integration` is the Arena ROS 2 package that runs external AI
+navigation policies as Nav2-compatible controllers. In this workspace it is
+used to connect SocialNav, UrbanNav, and LeLaN model inference to Arena/Nav2
+DWB benchmark runs.
 
-## Architecture
-
-`arena_ai_integration` owns the AI-DWB runtime for SocialNav, UrbanNav, and
-LeLaN benchmark runs. Model inference code, ROS sidecars, and benchmark helpers
-are packaged inside this ROS 2 package.
-
-Runtime flow:
+The package is intentionally self-contained: controller nodes, agent wrappers,
+model runtime code, checkpoints, launch files, scripts, and benchmark helper
+configs all live under:
 
 ```text
-RGB / odom / goal / instruction
+/home/khanhtoan/arena_ws/src/Arena/arena_ai_integration
+```
+
+When running inside the Arena Docker container, the same workspace is normally
+mounted at:
+
+```text
+/opt/arena_ws
+```
+
+Most scripts default to `/opt/arena_ws`, but they also respect
+`WORKSPACE_DIR`/`ARENA_WS_DIR`.
+
+## What This Package Provides
+
+Runtime entry points installed by `setup.py`:
+
+```text
+ai_controller
+human_states_bridge
+semantic_laser_filter
+aggregate_benchmark_metrics
+```
+
+Main launch file:
+
+```text
+launch/ai_controller.launch.py
+```
+
+Agent-specific parameter files:
+
+```text
+config/base_params.yaml
+config/socialnav_params.yaml
+config/urbannav_params.yaml
+config/lelan_params.yaml
+```
+
+Model config files:
+
+```text
+config/models/socialnav_film.yaml
+config/models/urbannav_film.yaml
+config/models/lelan.yaml
+```
+
+Bundled checkpoints:
+
+```text
+checkpoints/SocialNav_1_path.pth
+checkpoints/SocialNav_margin_last.pth
+checkpoints/UrbanNav_FiLM.pth
+checkpoints/LeLan_latest.pth
+```
+
+## Runtime Architecture
+
+The controller receives Arena/Nav2 state, runs an AI agent, converts model
+waypoints into ROS coordinates, and sends a path to Nav2 `FollowPath`.
+
+```text
+RGB image history + odom + global goal + instruction
   -> arena_ai_integration.nodes.ai_controller_node
   -> SocialNavAgent | UrbanNavAgent | LeLanAgent
-  -> local waypoints + arrival score
-  -> BaseAINode FollowPath path-adapter
-  -> Nav2 DWB FollowPath
-  -> cmd_vel_nav_raw relay to cmd_vel
+  -> local AI waypoints + arrival score
+  -> BaseAINode path adapter
+  -> Nav2 ComputePathToPose / FollowPath
+  -> DWB cmd_vel_nav
+  -> robot cmd_vel
 ```
 
-With `ARENA_AI_DWB_INTEGRATION=shaped_path`, Nav2 still computes the benchmark
-global path to the final goal. The AI controller inserts the leading AI
-waypoints into the start of that path, rejoins the global path ahead of the
-robot, and sends the result as a `nav_msgs/Path` through Nav2 `FollowPath`.
-The raw AI output is never sent directly to DWB.
-
-With `ARENA_AI_DWB_INTEGRATION=one_waypoint_replace`, Nav2 computes the same
-benchmark global path, but the controller replaces only the selected waypoint
-ahead of the robot (`path_waypoint_index`, default fourth waypoint) with the
-matching AI waypoint before sending the path to DWB.
-
-UrbanNav and LeLaN use the same FollowPath path-adapter as SocialNav. The old
-hard-gate DWB candidate selection and waypoint-regeneration logic is intentionally
-not used by the unified controller.
-
-## Checkpoints
-
-Place model weights here:
+The default integration mode is:
 
 ```text
-arena_ai_integration/checkpoints/
-  SocialNav_1_path.pth
-  UrbanNav_FiLM.pth
-  LeLan_latest.pth
+ARENA_AI_DWB_INTEGRATION=path_adapter
 ```
 
-The model YAML files are installed from:
+Supported `dwb_integration_mode` values are:
 
 ```text
-arena_ai_integration/config/models/
-  socialnav_film.yaml
-  urbannav_film.yaml
-  lelan.yaml
+none
+path_adapter
+shaped_path
+shaped_path_no_tail
+one_waypoint_replace
+hard_gate
 ```
 
-## Agents
+`use_dwb_hard_gate:=true` forces `hard_gate` mode. Normal benchmark runs should
+prefer `path_adapter` unless testing another integration mode explicitly.
 
-| agent_type | Default checkpoint | Runtime module |
-| --- | --- | --- |
-| `socialnav` | `SocialNav_1_path.pth` | `arena_ai_integration.models.socialnav.runtime.SocialNavModel` |
-| `urbannav` | `UrbanNav_FiLM.pth` | `arena_ai_integration.models.socialnav.runtime.UrbanNavModel` |
-| `lelan` | `LeLan_latest.pth` | `arena_ai_integration.models.lelan.runtime.LeLaNInferenceModel` |
+## Supported Agents
 
-`agent_name` still selects the checkpoint name when a matching
-`checkpoints/<agent_name>.pth` exists. `agent_type` selects the wrapper class.
+| `AGENT_TYPE` | Params file | Model config | Default checkpoint |
+| --- | --- | --- | --- |
+| `socialnav` | `socialnav_params.yaml` | `socialnav_film.yaml` | `SocialNav_1_path.pth` |
+| `urbannav` | `urbannav_params.yaml` | `urbannav_film.yaml` | `UrbanNav_FiLM.pth` |
+| `lelan` | `lelan_params.yaml` | `lelan.yaml` | `LeLan_latest.pth` |
+
+The agent type selects the Python wrapper:
+
+```text
+socialnav -> arena_ai_integration.agents.socialnav_agent.SocialNavAgent
+urbannav  -> arena_ai_integration.agents.urbannav_agent.UrbanNavAgent
+lelan     -> arena_ai_integration.agents.lelan_agent.LeLanAgent
+```
+
+`agent_name` is passed to the controller and is also used by the agent helper
+when looking for a matching `checkpoints/<agent_name>.pth`.
 
 ## Build
 
+From the host workspace, enter the Arena shell/container first:
+
+```bash
+cd /home/khanhtoan/arena_ws
+source arena
+```
+
+Then build the package from the Arena shell. The workspace path inside the
+container is usually `/opt/arena_ws`:
+
 ```bash
 cd /opt/arena_ws
+source /opt/arena_ws/source
+arena build --packages-select arena_ai_integration
+source install/setup.bash
+```
+
+This scoped build only rebuilds `arena_ai_integration` artifacts under
+`build/`, `install/`, and `log/`. It does not edit source files or rebuild other
+packages unless the build tool is invoked with a broader package selection.
+
+If you need to build directly with colcon:
+
+```bash
 colcon build --packages-select arena_ai_integration --symlink-install
 source install/setup.bash
 ```
 
-## Run
+If you are already in a locally sourced Arena shell that uses the host path,
+replace `/opt/arena_ws` with `/home/khanhtoan/arena_ws`.
 
-Standalone controller:
+## Run A Standalone Agent Session
+
+Use `start_agent.sh` to launch Arena plus one AI controller:
+
+```bash
+cd /home/khanhtoan/arena_ws
+WORKSPACE_DIR=/home/khanhtoan/arena_ws \
+AGENT_TYPE=socialnav \
+ARENA_AI_DWB_INTEGRATION=path_adapter \
+bash src/Arena/arena_ai_integration/scripts/start_agent.sh
+```
+
+Other agents:
+
+```bash
+AGENT_TYPE=urbannav bash src/Arena/arena_ai_integration/scripts/start_agent.sh
+AGENT_TYPE=lelan bash src/Arena/arena_ai_integration/scripts/start_agent.sh
+```
+
+Useful overrides:
+
+```text
+SIM=isaac
+WORLD=hospital_1
+ROBOT=turtlebot
+LOCAL_PLANNER=dwb
+GLOBAL_PLANNER=navfn
+INTER_PLANNER=default
+ARENA_HEADLESS=1
+ENABLE_VISUALIZATION=false
+MODEL_CONFIG=/path/to/model.yaml
+MODEL_CHECKPOINT=/path/to/checkpoint.pth
+```
+
+For `socialnav`, the script also starts:
+
+```text
+human_states_bridge
+semantic_laser_filter
+```
+
+## Run Benchmarks
+
+Before long Isaac/Arena benchmark runs, make sure the host has enough inotify
+capacity:
 
 ```bash
 sudo sysctl -w fs.inotify.max_user_watches=524288
 sudo sysctl -w fs.inotify.max_user_instances=1024
 sudo sysctl -w fs.inotify.max_queued_events=32768
-
-source /opt/arena_ws/source
-source /opt/arena_ws/install/setup.bash
-conda activate socialnav
-
-ARENA_AI_DWB_INTEGRATION=shaped_path_no_tail ARENA_AI_PYTHONNOUSERSITE=1 ARENA_HEADLESS=1 bash ./src/Arena/arena_ai_integration/scripts/start_benchmark.sh
-
-AGENT_TYPE=socialnav ./src/Arena/arena_ai_integration/scripts/start_agent.sh
-AGENT_TYPE=urbannav ./src/Arena/arena_ai_integration/scripts/start_agent.sh
-AGENT_TYPE=lelan ./src/Arena/arena_ai_integration/scripts/start_agent.sh
-
-SCENARIOS=default_05,default_04,moving_peds EPISODES=1 RUN_DURATION=180 LOCAL_PLANNER=mppi RUN_ID_START=2000 ./src/Arena/arena_ai_integration/scripts/start_data_recorder.sh
 ```
 
-`start_benchmark.sh` activates `BENCHMARK_CONDA_ENV=socialnav` by default before
-starting the AI controller. If conda is installed outside the usual
-`~/miniconda3`, `~/anaconda3`, `/opt/conda`, or miniforge/mambaforge paths, pass
-the init script explicitly:
+Default single-agent benchmark:
 
 ```bash
-BENCHMARK_CONDA_SH=/path/to/etc/profile.d/conda.sh bash ./src/Arena/arena_ai_integration/scripts/start_benchmark.sh
+cd /home/khanhtoan/arena_ws
+WORKSPACE_DIR=/home/khanhtoan/arena_ws \
+AGENT_TYPE=socialnav \
+BENCHMARK_SCENARIOS=default \
+BENCHMARK_EPISODES=1 \
+ARENA_HEADLESS=1 \
+bash src/Arena/arena_ai_integration/scripts/start_benchmark.sh
 ```
 
-If the current python environment already contains the AI dependencies, disable
-auto-activation:
-
-```bash
-BENCHMARK_CONDA_ENV=none bash ./src/Arena/arena_ai_integration/scripts/start_benchmark.sh
-```
-
-To run all bundled AI agents sequentially over the same suite, use
-`AGENT_TYPE=all`. The script runs `socialnav`, `urbannav`, then `lelan`, each
-with a matching single-agent DWB contestant so the external AI controller and
-benchmark contestant stay aligned:
+Run without auto-activating the default `socialnav` conda environment:
 
 ```bash
 BENCHMARK_CONDA_ENV=none \
-BENCHMARK_SUITE=social_contest \
+bash src/Arena/arena_ai_integration/scripts/start_benchmark.sh
+```
+
+If conda is installed in a non-standard location:
+
+```bash
+BENCHMARK_CONDA_SH=/path/to/etc/profile.d/conda.sh \
+bash src/Arena/arena_ai_integration/scripts/start_benchmark.sh
+```
+
+Run all bundled AI agents sequentially:
+
+```bash
 AGENT_TYPE=all \
+AI_AGENT_SEQUENCE=socialnav,urbannav,lelan \
 ARENA_HEADLESS=1 \
-bash ./src/Arena/arena_ai_integration/scripts/start_benchmark.sh
+bash src/Arena/arena_ai_integration/scripts/start_benchmark.sh
 ```
 
-`start_benchmark.sh` does not launch RViz unless requested. To inspect a run on
-a machine/container with display forwarding:
+Run a pure DWB baseline without an AI controller:
 
 ```bash
-START_RVIZ=1 ARENA_HEADLESS=0 bash ./src/Arena/arena_ai_integration/scripts/start_benchmark.sh
+AGENT_TYPE=none \
+START_AI_CONTROLLER=0 \
+BENCHMARK_CONTEST_FILE=src/Arena/arena_ai_integration/config/benchmark/contests/dwb_baseline.yaml \
+bash src/Arena/arena_ai_integration/scripts/start_benchmark.sh
 ```
 
-RViz is launched through Arena's `rviz_utils` attach flow, the same path used by
-`arena viz`. It defaults to `RVIZ_NS=/arena/env_0/task_generator_node`,
-`RVIZ_VIEW=map`, and `RVIZ_ROBOT=0`.
-
-Benchmark runs use `arena_simulation_setup/launch/robot.launch.py` to map:
+Benchmark helper configs are available at:
 
 ```text
-SocialNav*      -> agent_type=socialnav
-UrbanNav*       -> agent_type=urbannav
-LeLan* / LeLaN* -> agent_type=lelan
+config/benchmark/suites/hospital_1_default.yaml
+config/benchmark/contests/socialnav_dwb.yaml
+config/benchmark/contests/dwb_baseline.yaml
 ```
 
-Pure DWB baselines should use an empty/non-AI `agent_name`, so no AI controller is
-launched.
+Without `BENCHMARK_SUITE`, `BENCHMARK_SUITE_FILE`, `BENCHMARK_CONTEST`, or
+`BENCHMARK_CONTEST_FILE`, `start_benchmark.sh` builds inline suite/contest JSON
+from the environment variables.
 
-Runtime modules:
+Benchmark outputs default to:
 
 ```text
-python3 -m arena_ai_integration.nodes.ai_controller_node
-python3 -m arena_ai_integration.nodes.human_states_bridge
-python3 -m arena_ai_integration.nodes.semantic_laser_filter
-python3 -m arena_ai_integration.tools.aggregate_benchmark_metrics
+data/benchmarks
+data/benchmarks/arena_ai_sidecars
 ```
 
-## Benchmark Configs
+## Data Recorder Helper
 
-`start_benchmark.sh` follows Arena's current benchmark layout. It calls:
+`start_data_recorder.sh` orchestrates baseline Arena data collection. It can
+prepare scenarios, launch Arena, start ground-truth bbox helpers, run the
+recorder, and repeat episodes.
+
+Example:
 
 ```bash
-ros2 run arena_evaluation benchmark --suite <suite> --contest <contest>
+cd /home/khanhtoan/arena_ws
+WORKSPACE_DIR=/home/khanhtoan/arena_ws \
+SCENARIOS=default_05,default_04 \
+EPISODES=1 \
+RUN_DURATION=180 \
+LOCAL_PLANNER=dwb \
+RUN_ID_START=2000 \
+bash src/Arena/arena_ai_integration/scripts/start_data_recorder.sh
 ```
 
-By default the script builds inline YAML equivalent to:
-
-```text
-arena_ai_integration/config/benchmark/
-  suites/hospital_1_default.yaml
-  contests/socialnav_dwb.yaml
-```
-
-Useful overrides:
+Common recorder commands:
 
 ```bash
-BENCHMARK_SCENARIOS=default,normal BENCHMARK_EPISODES=1 bash ./src/Arena/arena_ai_integration/scripts/start_benchmark.sh
-BENCHMARK_SUITE=basic BENCHMARK_CONTEST=basic AGENT_TYPE=none START_AI_CONTROLLER=0 bash ./src/Arena/arena_ai_integration/scripts/start_benchmark.sh
-BENCHMARK_SUITE_FILE=./src/Arena/arena_ai_integration/config/benchmark/suites/hospital_1_default.yaml \
-BENCHMARK_CONTEST_FILE=./src/Arena/arena_ai_integration/config/benchmark/contests/socialnav_dwb.yaml \
-bash ./src/Arena/arena_ai_integration/scripts/start_benchmark.sh
+bash src/Arena/arena_ai_integration/scripts/start_data_recorder.sh status
+bash src/Arena/arena_ai_integration/scripts/start_data_recorder.sh stop
 ```
 
-## Conflict Rule
+## Direct ROS Launch
 
-Only one AI controller should run for a robot namespace. Do not launch
-additional external controllers together with `arena_ai_integration` for the same
-robot namespace.
+After building and sourcing the workspace:
+
+```bash
+ros2 launch arena_ai_integration ai_controller.launch.py \
+  agent_type:=socialnav \
+  params_file:="$(ros2 pkg prefix arena_ai_integration)/share/arena_ai_integration/config/socialnav_params.yaml" \
+  agent_name:=socialnav \
+  model_config_path:=/home/khanhtoan/arena_ws/src/Arena/arena_ai_integration/config/models/socialnav_film.yaml \
+  model_checkpoint_path:=/home/khanhtoan/arena_ws/src/Arena/arena_ai_integration/checkpoints/SocialNav_1_path.pth \
+  robot_namespace:=/arena/env_0/task_generator_node/turtlebot \
+  robot_frame:=turtlebot/base_link \
+  image_topic:=/arena/env_0/task_generator_node/turtlebot/rgbd_camera/image \
+  dwb_cmd_topic:=/arena/env_0/task_generator_node/turtlebot/cmd_vel_nav \
+  cmd_vel_topic:=/arena/env_0/task_generator_node/turtlebot/cmd_vel \
+  plan_topic:=/arena/env_0/task_generator_node/turtlebot/plan \
+  dwb_integration_mode:=path_adapter \
+  use_sim_time:=true
+```
+
+Use the `/opt/arena_ws/...` path variants for the model files when launching
+inside the Arena container.
+
+## Important Runtime Notes
+
+Only one `arena_ai_integration` controller should run for a given robot
+namespace. Running multiple external controllers against the same robot can
+cause conflicting `cmd_vel` behavior.
+
+The AI model dependencies are separate from the ROS package metadata. If model
+loading fails, verify the active Python/conda environment, CUDA/PyTorch
+availability, model config path, and checkpoint path.
+
+`SocialNavAgent` can soft-fail into DWB fallback mode when the model cannot be
+loaded. UrbanNav and LeLaN expect their configs and checkpoints to exist.
+
+The default Arena robot namespace differs between launch paths:
+
+```text
+start_agent.sh default:      /task_generator_node/turtlebot
+start_benchmark.sh default:  /arena/env_0/task_generator_node/turtlebot
+```
+
+Override `ARENA_AI_ROBOT_NAMESPACE`, `ARENA_AI_ROBOT_FRAME`, and topic variables
+when `ros2 topic list` shows a different namespace layout.
