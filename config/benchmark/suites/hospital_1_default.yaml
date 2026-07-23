@@ -1,0 +1,11 @@
+stages:
+  - name: hospital_1_default
+    map: hospital_1
+    robot: turtlebot
+    episodes: 1
+    tm_robots: scenario
+    tm_obstacles: scenario
+    timeout: 180s
+    config:
+      scenario:
+        file: default

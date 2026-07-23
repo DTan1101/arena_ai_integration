@@ -1,0 +1,47 @@
+# Shared controller parameters for all AI agents
+/**:
+  ros__parameters:
+    history_length: 8
+    control_frequency: 3.0
+    look_ahead_distance: 1.25
+    max_linear_velocity: 1.0
+    max_angular_velocity: 1.5
+    arrival_threshold: 2.5
+    use_arrival_completion: false
+    controller_reset_enabled: false
+    goal_completion_radius: 0.25
+    max_eval_staleness_sec: 2.0
+    enable_bev_visualization: false
+    bev_visualization_period_sec: 1.0
+    enable_human_tracking: true
+    max_humans: 10
+    path_waypoint_index: 3
+    ai_rejoin_skip_distance: 2.5
+    phase_local_goal_enabled: true
+    phase_local_goal_reached_radius: 0.45
+    phase_local_goal_timeout_sec: 8.0
+    local_goal_relock_mode: periodic
+    rolling_local_goal_final_radius: 0.8
+    rolling_relock_period_sec: 1.5
+    path_update_period_sec: 1.5
+    compute_path_timeout_sec: 2.5
+    robot_namespace: /task_generator_node/turtlebot
+    instruction_topic: /nav_instruction
+    human_detections_topic: /detections/humans
+    flip_y_axis: true
+    fallback_to_dwb: false
+    ai_inference_fail_threshold: 3
+    dwb_integration_mode: path_adapter
+    shaped_path_num_waypoints: 4
+    social_cost_hard_radius: 0.35
+    social_cost_personal_radius: 1.0
+    social_cost_social_radius: 1.5
+    social_cost_w_hard: 100.0
+    social_cost_w_personal: 5.0
+    social_cost_w_social: 1.0
+    social_cost_w_global: 0.25
+    social_cost_w_progress: 0.5
+    social_cost_w_smooth: 0.1
+    use_dwb_hard_gate: false
+    dwb_hard_gate_radius: 0.25
+    dwb_hard_gate_regeneration_max_attempts: 3

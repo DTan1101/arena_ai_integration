@@ -1,0 +1,6 @@
+- name: socialnav-dwb
+  mobile:
+    driver: nav2
+    local_planner: dwb
+    global_planner: navfn
+    inter_planner: default
