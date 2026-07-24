@@ -27,6 +27,17 @@ ARENA_HEADLESS="${ARENA_HEADLESS:-1}"
 ARENA_AI_DWB_INTEGRATION="${ARENA_AI_DWB_INTEGRATION:-path_adapter}"
 ARENA_AI_DWB_HARD_GATE="${ARENA_AI_DWB_HARD_GATE:-false}"
 ARENA_AI_COORDINATE_MODE="${ARENA_AI_COORDINATE_MODE:-xz_to_ros}"
+ARENA_AI_FALLBACK_TO_DWB="${ARENA_AI_FALLBACK_TO_DWB:-true}"
+RVIZ_NS="${RVIZ_NS:-/arena/env_0/task_generator_node}"
+ARENA_AI_TASK_NAMESPACE="${ARENA_AI_TASK_NAMESPACE:-$RVIZ_NS}"
+ARENA_AI_ROBOT_NAMESPACE="${ARENA_AI_ROBOT_NAMESPACE:-$ARENA_AI_TASK_NAMESPACE/$ROBOT}"
+ARENA_AI_ROBOT_FRAME="${ARENA_AI_ROBOT_FRAME:-$ROBOT/base_link}"
+ARENA_AI_INSTRUCTION_TOPIC="${ARENA_AI_INSTRUCTION_TOPIC:-/nav_instruction}"
+ARENA_AI_HUMAN_DETECTIONS_TOPIC="${ARENA_AI_HUMAN_DETECTIONS_TOPIC:-/detections/humans}"
+ARENA_AI_IMAGE_TOPIC="${ARENA_AI_IMAGE_TOPIC:-$ARENA_AI_ROBOT_NAMESPACE/rgbd_camera/image}"
+ARENA_AI_DWB_CMD_TOPIC="${ARENA_AI_DWB_CMD_TOPIC:-$ARENA_AI_ROBOT_NAMESPACE/cmd_vel_nav}"
+ARENA_AI_CMD_VEL_TOPIC="${ARENA_AI_CMD_VEL_TOPIC:-$ARENA_AI_ROBOT_NAMESPACE/cmd_vel}"
+ARENA_AI_PLAN_TOPIC="${ARENA_AI_PLAN_TOPIC:-$ARENA_AI_ROBOT_NAMESPACE/plan}"
 
 AI_INTEGRATION_DIR="$ARENA_DIR/arena_ai_integration"
 
@@ -97,7 +108,11 @@ fi
 
 if [ "$AGENT_TYPE" = "socialnav" ]; then
     echo "[INFO] Starting Human States Bridge..."
-    python3 -m arena_ai_integration.nodes.human_states_bridge &
+    python3 -m arena_ai_integration.nodes.human_states_bridge \
+        --ros-args \
+        -p use_sim_time:=true \
+        -p task_namespace:="$ARENA_AI_TASK_NAMESPACE" \
+        -p output_topic:="$ARENA_AI_HUMAN_DETECTIONS_TOPIC" &
     sleep 1
 fi
 
@@ -120,13 +135,19 @@ sleep 12
 
 if [ "$AGENT_TYPE" = "socialnav" ]; then
     echo "[INFO] Starting Semantic Laser Filter..."
-    python3 -m arena_ai_integration.nodes.semantic_laser_filter --ros-args -p use_sim_time:=true &
+    python3 -m arena_ai_integration.nodes.semantic_laser_filter \
+        --ros-args \
+        -p use_sim_time:=true \
+        -p detections_topic:="$ARENA_AI_HUMAN_DETECTIONS_TOPIC" \
+        -p input_scan_topic:="$ARENA_AI_ROBOT_NAMESPACE/lidar" \
+        -p output_scan_topic:="$ARENA_AI_ROBOT_NAMESPACE/lidar_static" \
+        -p target_frame:="$ARENA_AI_ROBOT_FRAME" &
     sleep 1
 fi
 
 PKG_SHARE="$(ros2 pkg prefix arena_ai_integration)/share/arena_ai_integration"
 
-echo "[INFO] Starting unified AI controller..."
+echo "[INFO] Starting unified AI controller (robot_ns=$ARENA_AI_ROBOT_NAMESPACE)..."
 ros2 launch arena_ai_integration ai_controller.launch.py \
     agent_type:="$AGENT_TYPE" \
     params_file:="$PKG_SHARE/config/$PARAMS_FILE" \
@@ -138,6 +159,15 @@ ros2 launch arena_ai_integration ai_controller.launch.py \
     dwb_integration_mode:="$ARENA_AI_DWB_INTEGRATION" \
     use_dwb_hard_gate:="$ARENA_AI_DWB_HARD_GATE" \
     coordinate_mode:="$ARENA_AI_COORDINATE_MODE" \
+    fallback_to_dwb:="$ARENA_AI_FALLBACK_TO_DWB" \
+    robot_namespace:="$ARENA_AI_ROBOT_NAMESPACE" \
+    robot_frame:="$ARENA_AI_ROBOT_FRAME" \
+    instruction_topic:="$ARENA_AI_INSTRUCTION_TOPIC" \
+    human_detections_topic:="$ARENA_AI_HUMAN_DETECTIONS_TOPIC" \
+    image_topic:="$ARENA_AI_IMAGE_TOPIC" \
+    dwb_cmd_topic:="$ARENA_AI_DWB_CMD_TOPIC" \
+    cmd_vel_topic:="$ARENA_AI_CMD_VEL_TOPIC" \
+    plan_topic:="$ARENA_AI_PLAN_TOPIC" \
     use_sim_time:=true &
 
 sleep 3
